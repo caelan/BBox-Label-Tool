@@ -18,6 +18,17 @@ import ttk
 #COLORS = ['red', 'blue', 'yellow', 'pink', 'cyan', 'green', 'black']
 COLORS = ['red', 'blue', 'olive', 'teal', 'cyan', 'green', 'black']
 
+CLASSES_PATH = 'classes.txt'
+
+def load_classes(path):
+    classes = []
+    if not os.path.exists(path):
+        return classes
+    with open(path) as cf:
+        for line in cf.readlines():
+            classes.append(line.strip('\n'))
+    return classes
+
 class LabelTool():
     def __init__(self, master):
         # set up the main frame
@@ -32,7 +43,6 @@ class LabelTool():
         self.tkimg = None
         self.currentLabelclass = ''
         self.cla_can_temp = []
-        self.classcandidate_filename = 'class.txt'
 
         # initialize mouse state
         self.STATE = {
@@ -66,13 +76,9 @@ class LabelTool():
         self.classname = StringVar()
         self.classcandidate = ttk.Combobox(self.frame,state='readonly',textvariable=self.classname)
         self.classcandidate.grid(row=1,column=2)
-        if os.path.exists(self.classcandidate_filename):
-            with open(self.classcandidate_filename) as cf:
-                for line in cf.readlines():
-                    # print line
-        			self.cla_can_temp.append(line.strip('\n'))
-        self.cla_can_temp = ['cat', 'dog']
-        #print self.cla_can_temp
+
+        self.cla_can_temp = load_classes(CLASSES_PATH)
+        print('Classes:', self.cla_can_temp)
         self.classcandidate['values'] = self.cla_can_temp
         self.classcandidate.current(0)
         self.currentLabelclass = self.classcandidate.get() #init
