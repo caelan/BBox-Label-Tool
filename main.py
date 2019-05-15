@@ -3,6 +3,9 @@
 from __future__ import division, print_function
 from collections import namedtuple
 
+#from ltamp_perception.msg import Detection, DetectionArray
+#from ltamp_perception.srv import Detect, DetectResponse
+
 LabeledBox = namedtuple('LabeledBox', ['label', 'x1', 'y1', 'x2', 'y2'])
 
 try:
@@ -19,6 +22,7 @@ import os
 # colors for the bboxes
 #COLORS = ['red', 'blue', 'yellow', 'pink', 'cyan', 'green', 'black']
 COLORS = ['red', 'blue', 'olive', 'teal', 'cyan', 'green', 'black']
+BACKGROUND = 'white' # 'light grey'
 
 CLASSES_PATH = 'classes.txt'
 
@@ -39,13 +43,14 @@ class ImageLabeler(object):
         # set up the main frame
         self.root = root
         self.root.title("ROS Image Labeler")
-        #self.root.configure(background='grey')
-        frame = Frame(self.root, background='tan')
+        #self.root.configure(background=BACKGROUND)
+        frame = Frame(self.root, bg=BACKGROUND)
         frame.pack(fill=BOTH, expand=True)
         self.root.resizable(width=FALSE, height=FALSE)
 
         # initialize global state
-        self.image_path = os.path.join(r'./Images', '%03d' % 1, 'test.jpeg')
+        image_path = os.path.join(r'./Images', '%03d' % 1, 'test.jpeg')
+        self.img = Image.open(image_path)
         self.tkimg = None
 
         # initialize mouse state
@@ -67,25 +72,27 @@ class ImageLabeler(object):
         # main panel for labeling
         self.disp_lb = Label(frame, text='')
         self.disp_lb.grid(row=0, column=0, sticky=W + N)
-        self.main_panel = Canvas(frame, cursor='tcross')
-        self.main_panel.bind("<Button-1>", self.mouse_click_cb)
-        self.main_panel.bind("<Motion>", self.mouse_move_cb)
+        self.canvas = Canvas(frame, cursor='tcross')
+        self.canvas.bind("<Button-1>", self.mouse_click_cb)
+        self.canvas.bind("<Motion>", self.mouse_move_cb)
         self.root.bind("<Return>", self.start_publishing)
         self.root.bind("<BackSpace>", self.delete_box)
         self.root.bind("d", self.delete_box)
         self.root.bind("<Escape>", self.cancel_box)
+        self.root.bind("p", self.publish)
         # TODO: additional hotkeys for toggling classes
 
-        self.main_panel.grid(row=1, column=0,  # rowspan=1, columnspan=1,
+        self.image_id = self.canvas.create_image(0, 0, image=None, anchor=NW)
+        self.canvas.grid(row=1, column=0,  # rowspan=1, columnspan=1,
                             sticky=W + N)
         self.publish_lb = Label(frame, text='')
         self.publish_lb.grid(row=2, column=0, sticky=W + N)
 
         # choose class
-        class_frame = Frame(frame)
+        class_frame = Frame(frame, bg=BACKGROUND)
         class_frame.grid(row=0, column=1, sticky=W + E)
-        class_lb = Label(class_frame, text='Class:')
-        class_lb.pack(side=LEFT)
+        #class_lb = Label(class_frame, text='Class:')
+        #class_lb.pack(side=LEFT)
         self.class_name = StringVar()
         self.class_selector = ttk.Combobox(
             class_frame, state='readonly', textvariable=self.class_name)
@@ -99,13 +106,15 @@ class ImageLabeler(object):
                                width=22, height=12)
         self.listbox.grid(row=1, column=1, columnspan=1, sticky=N + S)
 
-        btn_frame = Frame(frame)
+        btn_frame = Frame(frame, bg=BACKGROUND)
         btn_frame.grid(row=2, column=1, sticky=W + E)
         self.pub_btn = Button(btn_frame, text='Publish',
                               command=self.start_publishing)
+                              #highlightbackground=BACKGROUND)
         self.pub_btn.pack(side=LEFT, expand=True, fill='both')
         self.clear_btn = Button(btn_frame, text='Reset',
                                 command=self.clear_boxes)
+                                #highlightbackground=BACKGROUND)
         self.clear_btn.pack(side=RIGHT, expand=True, fill='both')
 
         #frame.columnconfigure(1, weight=1)
@@ -132,6 +141,10 @@ class ImageLabeler(object):
     def selected_indices(self):
         return self.listbox.curselection()
 
+    def publish(self, *args):
+        self.start_publishing()
+        self.load_image()
+
     def start_publishing(self, *args):
         self.publishing = True
         self.publish_lb.config(text='Publishing {} boxes [t={:.1f}]'.format(
@@ -142,11 +155,13 @@ class ImageLabeler(object):
         self.publish_lb.config(text='')
 
     def load_image(self):
-        self.img = Image.open(self.image_path)
+        if self.tkimg is not None:
+            self.canvas.delete(self.tkimg)
+            return
         self.tkimg = ImageTk.PhotoImage(self.img)
-        self.main_panel.config(width=self.tkimg.width(),
-                               height=self.tkimg.height())
-        self.main_panel.create_image(0, 0, image=self.tkimg, anchor=NW)
+        self.canvas.config(width=self.tkimg.width(),
+                           height=self.tkimg.height())
+        self.canvas.itemconfig(self.image_id, image=self.tkimg)
         self.clear_boxes()
 
     def mouse_click_cb(self, event):
@@ -157,6 +172,7 @@ class ImageLabeler(object):
         else:
             x1, x2 = min(self.x, event.x), max(self.x, event.x)
             y1, y2 = min(self.y, event.y), max(self.y, event.y)
+            self.stop_publishing()
             self.box_list.append(LabeledBox(self.current_class, x1, y1, x2, y2))
             self.box_id_list.append(self.current_box_id)
             self.current_box_id = None
@@ -166,7 +182,7 @@ class ImageLabeler(object):
 
     def draw_box(self, x1, y1, x2, y2):
         # TODO: take in the current color
-        return self.main_panel.create_rectangle(
+        return self.canvas.create_rectangle(
             x1, y1, x2, y2, width=2, outline=self.current_color)
 
     def mouse_move_cb(self, event):
@@ -175,32 +191,32 @@ class ImageLabeler(object):
         # TODO: highlight the selected box
         self.disp_lb.config(text='Cursor: x=%d, y=%d' % (event.x, event.y))
         if self.hl:
-            self.main_panel.delete(self.hl)
-        self.hl = self.main_panel.create_line(
+            self.canvas.delete(self.hl)
+        self.hl = self.canvas.create_line(
             0, event.y, self.tkimg.width(), event.y, width=2)
 
         if self.vl:
-            self.main_panel.delete(self.vl)
-        self.vl = self.main_panel.create_line(
+            self.canvas.delete(self.vl)
+        self.vl = self.canvas.create_line(
             event.x, 0, event.x, self.tkimg.height(), width=2)
 
         if self.click:
             if self.current_box_id:
-                self.main_panel.delete(self.current_box_id)
+                self.canvas.delete(self.current_box_id)
             self.current_box_id = self.draw_box(self.x, self.y, event.x, event.y)
 
     def cancel_box(self, *args):
         if not self.click:
             return
         if self.current_box_id:
-            self.main_panel.delete(self.current_box_id)
+            self.canvas.delete(self.current_box_id)
             self.current_box_id = None
             self.click = False
 
     def delete_box(self, *args):
-        for idx in self.selected_indices:
+        for idx in sorted(self.selected_indices, reverse=True):
             self.stop_publishing()
-            self.main_panel.delete(self.box_id_list[idx])
+            self.canvas.delete(self.box_id_list[idx])
             self.box_id_list.pop(idx)
             self.box_list.pop(idx)
             self.listbox.delete(idx)
@@ -208,7 +224,7 @@ class ImageLabeler(object):
     def clear_boxes(self):
         self.stop_publishing()
         for idx in range(len(self.box_id_list)):
-            self.main_panel.delete(self.box_id_list[idx])
+            self.canvas.delete(self.box_id_list[idx])
         self.listbox.delete(0, len(self.box_list))
         self.box_id_list = []
         self.box_list = []
