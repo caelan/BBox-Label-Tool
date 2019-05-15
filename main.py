@@ -28,6 +28,8 @@ def load_classes(path):
             classes.append(line.strip('\n'))
     return classes
 
+# http://tcl.tk/man/tcl8.5/TkCmd/options.htm#M-exportselection
+
 class ImageLabeler(object):
 
     def __init__(self, master):
@@ -39,18 +41,14 @@ class ImageLabeler(object):
         self.parent.resizable(width=FALSE, height=FALSE)
 
         # initialize global state
-        self.imageList = []
+        self.image_path = os.path.join(r'./Images', '%03d' % 1, 'test.jpeg')
         self.tkimg = None
-        self.currentLabelclass = ''
         self.cla_can_temp = []
 
         # initialize mouse state
-        self.STATE = {
-            'click': 0,
-            'x': 0,
-            'y': 0,
-        }
-
+        self.click = False
+        self.x = 0
+        self.y = 0
         # TODO: button to submit
         # TODO: continuously update the underlying image (with same boxes)
 
@@ -62,151 +60,146 @@ class ImageLabeler(object):
         self.vl = None
 
         # ----------------- GUI ---------------------
-        self.ldBtn = Button(self.frame, text="Load", command=self.loadDir)
-        self.ldBtn.grid(row=0, column=2, sticky=W + E)
-
         # main panel for labeling
+        self.disp_lb = Label(self.frame, text='')
+        self.disp_lb.grid(row=0, column=0, sticky=W + N)
         self.mainPanel = Canvas(self.frame, cursor='tcross')
-        self.mainPanel.bind("<Button-1>", self.mouseClick)
-        self.mainPanel.bind("<Motion>", self.mouseMove)
-        self.parent.bind("<Escape>", self.cancelBBox)
-        self.mainPanel.grid(row=1, column=1, rowspan=4,
+        self.mainPanel.bind("<Button-1>", self.mouse_click_cb)
+        self.mainPanel.bind("<Motion>", self.mouse_move_cb)
+        self.parent.bind("<Return>", self.delete_box)
+        self.parent.bind("<BackSpace>", self.delete_box)
+        self.parent.bind("d", self.delete_box)
+        self.parent.bind("<Escape>", self.cancel_box)
+        # TODO: additional hotkeys for toggling classes
+
+        self.mainPanel.grid(row=1, column=0, rowspan=1,
                             columnspan=1, sticky=W + N)
 
         # choose class
-        self.classname = StringVar()
+        self.class_frame = Frame(self.frame)
+        self.class_frame.grid(row=0, column=1, sticky=W + E)
+        self.class_lb = Label(self.class_frame, text='Class:')
+        #self.class_lb.grid(row=0, column=1, sticky=W + N)
+        self.class_lb.pack(side=LEFT)
+        self.class_name = StringVar()
         self.classcandidate = ttk.Combobox(
-            self.frame, state='readonly', textvariable=self.classname)
-        self.classcandidate.grid(row=1, column=2)
-
-        self.cla_can_temp = load_classes(CLASSES_PATH)
-        print('Classes:', self.cla_can_temp)
-        self.classcandidate['values'] = self.cla_can_temp
+            self.class_frame, state='readonly', textvariable=self.class_name)
+        self.classcandidate.pack(side=RIGHT)
+        #self.classcandidate.grid(row=0, column=2)
+        self.classcandidate['values'] = load_classes(CLASSES_PATH)
         self.classcandidate.current(0)
-        self.currentLabelclass = self.classcandidate.get()  # init
-        self.btnclass = Button(
-            self.frame, text='ComfirmClass', command=self.setClass)
-        self.btnclass.grid(row=2, column=2, sticky=W + E)
-
-        # TODO: highlight selected box
+        print('Classes:', self.classes)
 
         # showing bbox info & delete bbox
-        self.lb1 = Label(self.frame, text='Boxes:')
-        self.lb1.grid(row=3, column=2, sticky=W + N)
-        self.listbox = Listbox(self.frame, width=22, height=12)
-        self.listbox.grid(row=4, column=2, sticky=N + S)
-        self.btnDel = Button(self.frame, text='Delete', command=self.delBBox)
-        self.btnDel.grid(row=5, column=2, sticky=W + E + N)
-        self.btnClear = Button(self.frame, text='Clear',
-                               command=self.clearBBox)
-        self.btnClear.grid(row=5, column=3, sticky=W + E + N)
+        self.listbox = Listbox(self.frame, #selectmode='multiple', exportselection=True,
+                               width=22, height=12)
+        self.listbox.grid(row=1, column=1, columnspan=1, sticky=N + S)
 
-        # control panel for image navigation
-        self.ctrPanel = Frame(self.frame)
-        self.ctrPanel.grid(row=6, column=1, columnspan=2, sticky=W + E)
-        self.disp = Label(self.ctrPanel, text='')
-        self.disp.pack(side=RIGHT)
+        ctrPanel = Frame(self.frame)
+        ctrPanel.grid(row=2, column=1, sticky=W + E)
+        self.btnDel = Button(ctrPanel, text='Publish',
+                             command=self.delete_box)
+        #self.btnDel.grid(row=2, column=1, sticky=W + E + N)
+        self.btnDel.pack(side=LEFT, expand=True, fill='both')
+        self.btnClear = Button(ctrPanel, text='Reset',
+                               command=self.clear_boxes)
+        self.btnClear.pack(side=RIGHT, expand=True, fill='both')
+        #self.btnClear.grid(row=2, column=2, sticky=W + E + N)
 
-        self.frame.columnconfigure(1, weight=1)
-        self.frame.rowconfigure(4, weight=1)
+        #self.frame.columnconfigure(1, weight=1)
+        #self.frame.rowconfigure(4, weight=1)
+        # tkMessageBox.showerror("Error!", message="The specified dir doesn't exist!")
 
-    def loadDir(self):
         self.parent.focus()
-        # if not os.path.isdir(s):
-        #   tkMessageBox.showerror("Error!", message="The specified dir doesn't exist!")
-        #   return
-        category = 1
-        # get image list
-        imageDir = os.path.join(r'./Images', '%03d' % category)
-        self.imageList = glob.glob(os.path.join(imageDir, '*.JPEG'))
-        if len(self.imageList) == 0:
-            print('No .JPEG images found in the specified dir!')
-            return
-        self.loadImage()
+        self.load_image()
 
-    def loadImage(self):
-        cur = 0
-        imagepath = self.imageList[cur]
-        self.img = Image.open(imagepath)
+    @property
+    def classes(self):
+        return self.classcandidate['values']
+
+    @property
+    def current_class(self):
+        return self.classcandidate.get()
+
+    @property
+    def current_color(self):
+        index = self.classes.index(self.current_class)
+        return COLORS[index % len(COLORS)]
+
+    @property
+    def selected_indices(self):
+        return self.listbox.curselection()
+
+    def load_image(self):
+        self.img = Image.open(self.image_path)
         self.tkimg = ImageTk.PhotoImage(self.img)
         self.mainPanel.config(width=self.tkimg.width(),
                               height=self.tkimg.height())
         self.mainPanel.create_image(0, 0, image=self.tkimg, anchor=NW)
-        self.clearBBox()
+        self.clear_boxes()
 
-    def mouseClick(self, event):
+    def mouse_click_cb(self, event):
         if not self.tkimg:
             return
-        if self.STATE['click'] == 0:
-            self.STATE['x'], self.STATE['y'] = event.x, event.y
+        if not self.click:
+            self.x, self.y = event.x, event.y
         else:
-            x1, x2 = min(self.STATE['x'], event.x), max(
-                self.STATE['x'], event.x)
-            y1, y2 = min(self.STATE['y'], event.y), max(
-                self.STATE['y'], event.y)
-            self.bboxList.append((x1, y1, x2, y2, self.currentLabelclass))
+            x1, x2 = min(self.x, event.x), max(self.x, event.x)
+            y1, y2 = min(self.y, event.y), max(self.y, event.y)
+            self.bboxList.append((x1, y1, x2, y2, self.current_class))
             self.bboxIdList.append(self.bboxId)
             self.bboxId = None
             self.listbox.insert(END, '%s : (%d, %d) -> (%d, %d)' %
-                                (self.currentLabelclass, x1, y1, x2, y2))
-            color = COLORS[(len(self.bboxIdList) - 1) % len(COLORS)]
-            self.listbox.itemconfig(len(self.bboxIdList) - 1, fg=color)
-        self.STATE['click'] = 1 - self.STATE['click']
+                                (self.current_class, x1, y1, x2, y2))
+            self.listbox.itemconfig(len(self.bboxIdList) - 1, fg=self.current_color)
+        self.click = not self.click
 
-    def mouseMove(self, event):
+    def draw_box(self, x1, y1, x2, y2):
+        # TODO: take in the current color
+        return self.mainPanel.create_rectangle(
+            x1, y1, x2, y2, width=2, outline=self.current_color)
+
+    def mouse_move_cb(self, event):
         if not self.tkimg:
             return
-        self.disp.config(text='x: %d, y: %d' % (event.x, event.y))
+        # TODO: highlight the selected box
+        self.disp_lb.config(text='Cursor: x=%d, y=%d' % (event.x, event.y))
         if self.hl:
             self.mainPanel.delete(self.hl)
         self.hl = self.mainPanel.create_line(
             0, event.y, self.tkimg.width(), event.y, width=2)
+
         if self.vl:
             self.mainPanel.delete(self.vl)
         self.vl = self.mainPanel.create_line(
             event.x, 0, event.x, self.tkimg.height(), width=2)
 
-        if 1 == self.STATE['click']:
+        if self.click:
             if self.bboxId:
                 self.mainPanel.delete(self.bboxId)
-            color = COLORS[len(self.bboxList) % len(COLORS)]
-            self.bboxId = self.mainPanel.create_rectangle(
-                self.STATE['x'], self.STATE['y'], event.x, event.y, width=2, outline=color)
+            self.bboxId = self.draw_box(self.x, self.y, event.x, event.y)
 
-    def cancelBBox(self, event):
-        if 1 != self.STATE['click']:
+    def cancel_box(self, *args):
+        if not self.click:
             return
         if self.bboxId:
             self.mainPanel.delete(self.bboxId)
             self.bboxId = None
-            self.STATE['click'] = 0
+            self.click = False
 
-    def getIndex(self):
-        sel = self.listbox.curselection()
-        if len(sel) != 1:
-            return None
-        idx = int(sel[0])
-        return idx
+    def delete_box(self, *args):
+        for idx in self.selected_indices:
+            self.mainPanel.delete(self.bboxIdList[idx])
+            self.bboxIdList.pop(idx)
+            self.bboxList.pop(idx)
+            self.listbox.delete(idx)
 
-    def delBBox(self):
-        idx = self.getIndex()
-        if idx is None:
-            return
-        self.mainPanel.delete(self.bboxIdList[idx])
-        self.bboxIdList.pop(idx)
-        self.bboxList.pop(idx)
-        self.listbox.delete(idx)
-
-    def clearBBox(self):
+    def clear_boxes(self):
         for idx in range(len(self.bboxIdList)):
             self.mainPanel.delete(self.bboxIdList[idx])
         self.listbox.delete(0, len(self.bboxList))
         self.bboxIdList = []
         self.bboxList = []
-
-    def setClass(self):
-        self.currentLabelclass = self.classcandidate.get()
-        print('set label class to :', self.currentLabelclass)
 
 if __name__ == '__main__':
     root = Tk()
